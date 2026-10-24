@@ -1106,7 +1106,13 @@ function appSheet_(key) {
   const head = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   let cols = head.length;
   while (cols > 0 && !head[cols - 1]) cols--;
-  const n = Math.max(sh.getLastRow() - 1, 0);
+  // 수식이 아래쪽까지 미리 깔려 있어서 getLastRow가 크게 나와요. 앞쪽 입력 칸(A~D)이 찬 마지막 줄까지만 읽어요.
+  const all = Math.max(sh.getLastRow() - 1, 0);
+  let n = 0;
+  if (all) {
+    const keyCols = sh.getRange(2, 1, all, Math.min(4, cols)).getValues();
+    for (let i = keyCols.length - 1; i >= 0; i--) { if (keyCols[i].some(v => v !== '' && v !== null && v !== false)) { n = i + 1; break; } }
+  }
   const rg = n ? sh.getRange(2, 1, n, cols) : null;
   const vals = rg ? rg.getValues() : [], disp = rg ? rg.getDisplayValues() : [], fx = rg ? rg.getFormulas() : [];
   const rows = [];
@@ -1202,7 +1208,7 @@ function appRowAdd_(b) {
   const ss = book_();
   const sh = ss.getSheetByName(name);
   const cols = sh.getLastColumn();
-  const n = Math.max(sh.getLastRow(), 2);
+  const n = Math.min(Math.max(sh.getLastRow(), 2), 300);
   const vals = sh.getRange(2, 1, n, cols).getValues(), fx = sh.getRange(2, 1, n, cols).getFormulas();
   let target = 0;
   for (let i = 0; i < vals.length; i++) {

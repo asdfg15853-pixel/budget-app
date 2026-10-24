@@ -81,7 +81,7 @@ function resetAdd(keepDate) {
 
 /* ───────────── API ───────────── */
 
-async function api(action, body = {}) {
+async function api(action, body = {}, retry = 1) {
   const res = await fetch(API, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -91,6 +91,11 @@ async function api(action, body = {}) {
   const txt = await res.text();
   let j;
   try { j = JSON.parse(txt); } catch (e) { throw new Error('시트 응답을 읽지 못했어요. 잠시 뒤 다시 해 주세요'); }
+  // 스크립트 새 버전이 퍼지는 몇 초 동안 옛 버전이 답할 수 있어요 (문자 처리 응답이 옴) → 한 번 더 시도
+  if (j.ok && j.result !== undefined && j.parsed !== undefined && retry > 0) {
+    await new Promise(r => setTimeout(r, 1500));
+    return api(action, body, retry - 1);
+  }
   if (!j.ok) throw new Error(j.error || '처리하지 못했어요');
   return j;
 }
