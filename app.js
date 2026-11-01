@@ -604,7 +604,7 @@ function budgetBlock(info) {
       h('span', { class: 'bv' + (over ? ' neg' : '') }, won(Math.abs(info.remain))),
       over ? null : h('span', { class: 'pd' }, '하루 ' + won(info.perDay))),
     h('div', { class: 'progress b' }, h('div', { class: 'u' + tone, style: { width: used * 100 + '%' } })),
-    h('div', { class: 'caption' }, '생활비 ' + won(info.spent) + ' 씀 · ' + info.daysLeft + '일 남음' + (info.fixedMonthly ? ' · 고정비 월 ' + won(info.fixedMonthly) + '은 따로' : '')));
+    h('div', { class: 'caption' }, '생활비 ' + won(info.spent) + ' 씀 · ' + info.daysLeft + '일 남음 · 고정비 별도'));
 }
 
 /* 고정비: 한 번 넣으면 매달 결제일에 가계부에 자동으로 채워져요 */

@@ -1068,7 +1068,7 @@ function appBudgetSet_(b) {
   const rg = ss.getRangeByName('LIVING_COST');
   if (!rg) throw new Error('설정 탭에서 예산 칸(LIVING_COST)을 찾지 못했어요');
   rg.setValue(a);
-  return { ok: true, amount: a, message: a ? '한 달 예산을 ' + won_(a) + '으로 정했어요' : '예산을 비웠어요' };
+  return { ok: true, amount: a, message: a ? '한 달 생활비 예산을 ' + won_(a) + '으로 정했어요' : '예산을 비웠어요' };
 }
 
 
