@@ -277,6 +277,7 @@ function viewAdd() {
   const A = S.add;
   if (!S.boot) return h('div', { class: 'loading' }, h('span', { class: 'spin' }), '불러오는 중');
   const n = Number(A.amt || 0);
+  if (A.kind === '고정' && !S.boot.fixed) A.kind = '지출';
   const isFx = A.kind === '고정';
 
   // 왼쪽 위: 보통은 날짜, 고정비는 '매월 며칠'
@@ -292,7 +293,9 @@ function viewAdd() {
     leftChip = h('label', { class: 'date-chip' }, '📅 ', A.date === today() ? '오늘' : dayLabel(A.date), dateInp);
   }
 
-  const kindSeg = h('div', { class: 'seg' }, ['지출', '수입', '이체', '고정'].map(k =>
+  // 고정 탭은 시트 스크립트가 고정비 기능을 지원할 때만 (boot에 fixed가 있을 때)
+  const kinds = S.boot.fixed ? ['지출', '수입', '이체', '고정'] : ['지출', '수입', '이체'];
+  const kindSeg = h('div', { class: 'seg' }, kinds.map(k =>
     h('button', { class: A.kind === k ? 'on' : '', onclick: () => { A.kind = k; A.cat = ''; render(); } }, k)));
 
   const catList = isFx ? fixedCats() : catsOf(A.kind);
