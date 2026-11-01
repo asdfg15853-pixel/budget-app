@@ -851,6 +851,11 @@ function appRoute_(b) {
     if (a === 'app_update') return appWrite_(() => appUpdate_(b));
     if (a === 'app_delete') return appWrite_(() => appDelete_(b));
     if (a === 'app_fixed') return appWrite_(() => appFixed_(b));
+    if (a === 'app_budget') return appWrite_(() => appBudgetSet_(b));
+    if (a === 'app_fixed_add') return appWrite_(() => appFixedAdd_(b));
+    if (a === 'app_fixed_save') return appWrite_(() => appFixedSave_(b));
+    if (a === 'app_fixed_end') return appWrite_(() => appFixedEnd_(b, false));
+    if (a === 'app_fixed_delete') return appWrite_(() => appFixedEnd_(b, true));
     if (a === 'app_set') return appWrite_(() => appSet_(b));
     if (a === 'app_row_add') return appWrite_(() => appRowAdd_(b));
     if (a === 'app_row_clear') return appWrite_(() => appRowClear_(b));
@@ -910,6 +915,10 @@ function appBoot_(b) {
     return { r: it.row, d: appYmd_(ss, r[0]), n: String(r[2] || ''), a: Number(r[3]) || 0, p: String(r[4] || ''),
              m: String(r[6] || ''), guess: guess, pg: isPg_(r[2]) };
   });
+  const ledger = appLedger_(ss, b.month);
+  const cur = appCurYm_(ss);
+  const curRows = ledger.month === cur ? ledger.rows : appLedger_(ss, cur).rows;   // 예산은 늘 이번 달 기준
+  const fixed = appFixedList_(ss);
   return {
     ok: true,
     today: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd'),
@@ -917,7 +926,9 @@ function appBoot_(b) {
     pays: appPays_(ss),
     card: { payday: appNamed_(ss, 'CARD_PAYDAY'), min: appNamed_(ss, 'CARD_MIN'), period: appNamed_(ss, 'CARD_PERIOD') },
     pending: pend,
-    ledger: appLedger_(ss, b.month)
+    ledger: ledger,
+    fixed: fixed,
+    budget: appBudget_(ss, cur, curRows, fixed)
   };
 }
 
@@ -1034,6 +1045,187 @@ function appFixed_(b) {
   const msg = toggleFixed_(ss, sh, Number(b.r), v);
   const now = sh.getRange(Number(b.r), FIXED_FLAG_COL).getValue() === true;
   return { ok: true, on: now, message: msg || (on ? '고정지출에 넣었어요' : '고정 등록을 풀었어요') };
+}
+
+
+/* ── 한 달 예산 ──
+ * 예산은 설정 탭의 LIVING_COST(한 달 예산·생활비) 한 칸이에요. 비상금 목표 계산에도 같이 써요.
+ * 고정비까지 포함한 한 달 전체 지출 기준: 남은 돈 = 예산 − 이번 달 쓴 돈 − 이번 달 아직 안 나간 고정비 */
+
+function appBudget_(ss, ym, rows, fixed) {
+  let spent = 0, upcoming = 0;
+  rows.forEach(r => { if (r.g === '지출') spent += r.a; });
+  fixed.forEach(f => { if (f.k === '지출' && !f.stop && /^예정/.test(f.st)) upcoming += f.a; });
+  return { month: ym, amount: Number(appNamed_(ss, 'LIVING_COST')) || 0, spent: spent, upcoming: upcoming };
+}
+
+function appBudgetSet_(b) {
+  const ss = book_();
+  const a = Math.round(Number(b.amount));
+  if (!isFinite(a) || a < 0 || a > 1e10) throw new Error('예산 금액을 확인해 주세요');
+  const rg = ss.getRangeByName('LIVING_COST');
+  if (!rg) throw new Error('설정 탭에서 예산 칸(LIVING_COST)을 찾지 못했어요');
+  rg.setValue(a);
+  return { ok: true, amount: a, message: a ? '한 달 예산을 ' + won_(a) + '으로 정했어요' : '예산을 비웠어요' };
+}
+
+
+/* ── 고정비 (고정지출 표) ──
+ * 한 번 넣으면 가계부 전체 탭 수식이 시작월부터 매달 결제일에 자동으로 채워요.
+ * 해지: 종료월만 적어서 지난 기록은 남겨요. 금액·결제일 변경: 지난달까지는 옛 값, 이번 달부터 새 줄로 이어 가요. */
+
+function appCurYm_(ss) { return Utilities.formatDate(new Date(), appTz_(ss), 'yyyy-MM'); }
+function appYmShift_(ym, k) {
+  const d = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + k, 1));
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2);
+}
+function appYmSerial_(ym) { return serial_({ y: +ym.slice(0, 4), m: +ym.slice(5, 7), d: 1 }); }
+// 시작월·종료월 칸 값 → 'yyyy-MM' (비었으면 '')
+function appYm_(ss, v) {
+  if (v === '' || v === null || v === undefined) return '';
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{4})[-.\/]\s*(\d{1,2})/);
+    return m ? m[1] + '-' + ('0' + m[2]).slice(-2) : '';
+  }
+  const t = ymdOf_(ss, v);
+  return t ? t.y + '-' + ('0' + t.m).slice(-2) : '';
+}
+
+function appFixedList_(ss) {
+  const sh = ss.getSheetByName(FIXED_SHEET);
+  if (!sh) return [];
+  const v = sh.getRange(2, 1, FIXED_ROWS, 8).getValues();
+  const st = sh.getRange(2, 9, FIXED_ROWS, 1).getDisplayValues();     // I열 '이번 달' (예정 11/25, ✓ 11/1 반영 …)
+  const kind = {};
+  appCats_(ss).forEach(c => { kind[c.name] = c.kind; });
+  const cur = appCurYm_(ss);
+  const out = [];
+  v.forEach((r, i) => {
+    const n = String(r[0] || '').trim();
+    if (!n) return;
+    const e = appYm_(ss, r[6]);
+    if (e && e < cur) return;                                             // 지난달까지 끝난 줄은 숨겨요
+    out.push({ i: i + 2, n: n, c: String(r[1] || ''), a: Number(r[2]) || 0, p: String(r[3] || ''), d: Number(r[4]) || 0,
+               s: appYm_(ss, r[5]), e: e, stop: r[7] === true, k: kind[r[1]] || '', st: String(st[i][0] || '') });
+  });
+  out.sort((p, q) => (p.k === q.k ? p.d - q.d : p.k === '지출' ? -1 : q.k === '지출' ? 1 : 0));
+  return out;
+}
+
+function appFixedCheck_(ss, b) {
+  const n = String(b.n || '').trim();
+  if (!n) throw new Error('이름을 넣어 주세요 (예: 넷플릭스, 관리비)');
+  if (n.length > 40) throw new Error('이름이 너무 길어요');
+  const cat = appCats_(ss).find(c => c.name === b.c);
+  if (!cat || (cat.kind !== '지출' && cat.kind !== '수입')) throw new Error('카테고리를 골라 주세요');
+  const a = Math.round(Number(b.a));
+  if (!(a > 0)) throw new Error('금액을 넣어 주세요');
+  const d = Math.round(Number(b.d));
+  if (!(d >= 1 && d <= 31)) throw new Error('결제일은 1~31일 중에서 골라 주세요');
+  const p = String(b.p || '');
+  if (p && appPays_(ss).map(x => x.name).indexOf(p) < 0) throw new Error('없는 결제수단이에요: ' + p);
+  return { n: n, c: cat.name, a: a, p: p, d: d, k: cat.kind };
+}
+
+// 고정지출 표에서 이름이 같은 '살아 있는' 줄 (지난달까지 끝난 줄은 빼요)
+function appFixedDup_(ss, v, n, skipRow) {
+  const cur = appCurYm_(ss);
+  return v.findIndex((r, i) => i + 2 !== skipRow && String(r[0] || '').trim() === n && !(appYm_(ss, r[6]) && appYm_(ss, r[6]) < cur));
+}
+
+function appFixedWrite_(ss, sh, v, f, ym, how) {
+  const empty = v.findIndex(r => r[0] === '' || r[0] === null);
+  if (empty < 0) throw new Error('고정지출 표가 꽉 찼어요 (' + FIXED_ROWS + '줄). 시트에서 끝난 줄을 정리해 주세요');
+  const t = empty + 2;
+  const today = Utilities.formatDate(new Date(), appTz_(ss), 'M/d');
+  sh.getRange(t, 1, 1, 8).setValues([[f.n, f.c, f.a, f.p, f.d, appYmSerial_(ym), '', f.stop === true]]);
+  sh.getRange(t, 6, 1, 2).setNumberFormat('yyyy-mm');
+  sh.getRange(t, 10, 1, 2).setValues([[how + ' (' + today + ')', '']]);
+  v[empty] = [f.n, f.c, f.a, f.p, f.d, appYmSerial_(ym), '', false];
+  return t;
+}
+
+function appFixedRow_(sh, i, check) {
+  const t = Number(i);
+  if (!(t >= 2 && t <= FIXED_ROWS + 1)) throw new Error('고정비 줄 번호가 맞지 않아요');
+  const r = sh.getRange(t, 1, 1, 8).getValues()[0];
+  if (!String(r[0] || '').trim() || (check && String(check.n || '') !== String(r[0]).trim())) {
+    throw new Error('고정비 표가 그새 바뀌었어요. 새로고침한 뒤 다시 해 주세요');
+  }
+  return r;
+}
+
+// 이번 달 결제일이 지났는지 (월말보다 큰 결제일은 말일로)
+function appFixedPaidThisMonth_(ss, day) {
+  const tz = appTz_(ss), now = new Date();
+  const y = +Utilities.formatDate(now, tz, 'yyyy'), m = +Utilities.formatDate(now, tz, 'MM'), td = +Utilities.formatDate(now, tz, 'dd');
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return td >= Math.min(Number(day) || 1, last);
+}
+
+function appFixedAdd_(b) {
+  const ss = book_();
+  const sh = ss.getSheetByName(FIXED_SHEET);
+  const f = appFixedCheck_(ss, b);
+  const v = sh.getRange(2, 1, FIXED_ROWS, 7).getValues();
+  if (appFixedDup_(ss, v, f.n, 0) >= 0) throw new Error('같은 이름이 이미 고정비에 있어요: ' + f.n);
+  const cur = appCurYm_(ss);
+  const t = appFixedWrite_(ss, sh, v, f, cur, '앱에서 등록');
+  const paid = appFixedPaidThisMonth_(ss, f.d);
+  const what = f.k === '수입' ? '들어와요' : '나가요';
+  return { ok: true, i: t, message: f.n + ' 등록 · 매달 ' + f.d + '일에 자동으로 ' + what + (paid ? ' (이번 달 포함)' : '') };
+}
+
+function appFixedSave_(b) {
+  const ss = book_();
+  const sh = ss.getSheetByName(FIXED_SHEET);
+  const t = Number(b.i);
+  const r = appFixedRow_(sh, t, b.check);
+  const old = { n: String(r[0]).trim(), c: String(r[1] || ''), a: Number(r[2]) || 0, p: String(r[3] || ''), d: Number(r[4]) || 0 };
+  const f = appFixedCheck_(ss, Object.assign({}, old, b.f || {}));
+  f.stop = r[7] === true;
+  const v = sh.getRange(2, 1, FIXED_ROWS, 7).getValues();
+  if (f.n !== old.n && appFixedDup_(ss, v, f.n, t) >= 0) throw new Error('같은 이름이 이미 고정비에 있어요: ' + f.n);
+  const cur = appCurYm_(ss), start = appYm_(ss, r[5]), end = appYm_(ss, r[6]);
+  if ((f.a !== old.a || f.d !== old.d) && start && start < cur && !end) {
+    // 지난달까지는 옛 금액·결제일 그대로 남기고, 이번 달부터 새 줄로 이어 가요
+    const nt = appFixedWrite_(ss, sh, v, f, cur, '앱에서 금액·결제일 변경');
+    sh.getRange(t, 7).setValue(appYmSerial_(appYmShift_(cur, -1)));
+    sh.getRange(t, 7).setNumberFormat('yyyy-mm');
+    return { ok: true, i: nt, message: '이번 달부터 바뀐 값으로 들어가요 (지난 기록은 그대로)' };
+  }
+  sh.getRange(t, 1, 1, 5).setValues([[f.n, f.c, f.a, f.p, f.d]]);
+  return { ok: true, i: t, message: '고쳤어요' };
+}
+
+// hard=false: 해지 (종료월만 적어서 지난 기록은 남김) / hard=true: 기록까지 지우기
+// b.undo: 해지 취소 (종료월 비우기)
+function appFixedEnd_(b, hard) {
+  const ss = book_();
+  const sh = ss.getSheetByName(FIXED_SHEET);
+  const t = Number(b.i);
+  const r = appFixedRow_(sh, t, b.check);
+  const item = { n: String(r[0]).trim(), c: String(r[1] || ''), a: Number(r[2]) || 0, p: String(r[3] || ''), d: Number(r[4]) || 0 };
+  if (!hard && b.undo) {
+    sh.getRange(t, 7).setValue('');
+    return { ok: true, message: '해지를 취소했어요' };
+  }
+  const cur = appCurYm_(ss), start = appYm_(ss, r[5]);
+  let endYm = '';
+  if (!hard) {
+    endYm = appFixedPaidThisMonth_(ss, item.d) ? cur : appYmShift_(cur, -1);
+    if (!start || endYm < start) hard = true;                             // 한 번도 안 나간 줄은 그냥 지워요
+  }
+  if (hard) {
+    sh.getRange(t, 1, 1, 8).setValues([['', '', '', '', '', '', '', false]]);
+    sh.getRange(t, 10, 1, 2).setValues([['', '']]);
+    return { ok: true, deleted: true, item: item, message: '고정비에서 지웠어요: ' + item.n };
+  }
+  sh.getRange(t, 7).setValue(appYmSerial_(endYm));
+  sh.getRange(t, 7).setNumberFormat('yyyy-mm');
+  const inc = (appCats_(ss).find(c => c.name === item.c) || {}).kind === '수입';
+  const verb = inc ? '들어와요' : '나가요';
+  return { ok: true, end: endYm, message: '해지했어요 · ' + (endYm === cur ? '이번 달까지만 ' + verb : '이번 달부터 안 ' + verb) };
 }
 
 /* ── 대시보드: 시트 모양 그대로 ──

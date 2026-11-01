@@ -134,8 +134,14 @@ button.row:active { background: var(--fill); }
 .add { display: flex; flex-direction: column; min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 104px); }
 .add .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 10px; }
 .date-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; background: var(--fill); font-size: 15px; font-weight: 500; }
-.date-chip input { position: absolute; inset: 0; opacity: 0; width: 100%; }
-.add .seg { width: 180px; }
+.date-chip input, .date-chip select { position: absolute; inset: 0; opacity: 0; width: 100%; -webkit-appearance: none; appearance: none; font-size: 16px; }
+.add .head .seg { flex: 1; max-width: 236px; min-width: 0; }
+.bline { display: block; margin: -2px auto 2px; padding: 3px 10px; border-radius: 999px; font-size: 13px; color: var(--label2); text-align: center; font-variant-numeric: tabular-nums; }
+.bline b { color: var(--label); font-weight: 600; }
+.bline.neg b { color: var(--red); }
+.bline.set { color: var(--blue); font-weight: 500; }
+.bline.hide { visibility: hidden; }
+.bline:active { background: var(--fill); }
 .amount { text-align: center; margin: 6px 0 4px; }
 .amount .v { font-size: 46px; font-weight: 700; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
 .amount .v.zero { color: var(--label3); }
@@ -175,6 +181,22 @@ button.row:active { background: var(--fill); }
 .bars .track { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
 .bars .fillbar { height: 100%; background: var(--blue); border-radius: 3px; }
 .bars .diff { font-size: 12px; color: var(--label2); }
+.kpi .budget { display: block; width: 100%; text-align: left; margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.kpi .budget .bl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.kpi .budget .bv { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.kpi .budget .pd { font-size: 15px; font-weight: 600; color: var(--green); font-variant-numeric: tabular-nums; }
+.kpi .budget .caption { font-size: 12px; }
+.kpi .budget.set { display: flex; flex-direction: column; gap: 2px; }
+.kpi .budget.set .bt { color: var(--blue); font-size: 16px; font-weight: 600; }
+.progress.b { display: flex; margin: 8px 0 6px; }
+.progress.b > div { border-radius: 0; }
+.progress.b .u { background: var(--blue); }
+.progress.b .u.warn { background: var(--orange); }
+.progress.b .u.over { background: var(--red); }
+.progress.b .f { background: var(--blue); opacity: 0.3; }
+.section-title.row-title { display: flex; justify-content: space-between; }
+.empty { color: var(--label2); font-size: 14px; line-height: 1.45; }
+.linkbtn { display: block; margin: 16px auto 0; color: var(--label2); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
 .progress { height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; margin-top: 8px; }
 .progress > div { height: 100%; background: var(--green); border-radius: 4px; }
 .cal { padding: 10px 8px 12px; }
@@ -267,7 +289,7 @@ button.row:active { background: var(--fill); }
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 92px); transform: translate(-50%, 20px);
   z-index: 60; opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
   background: rgba(30, 30, 32, 0.92); color: #fff; border-radius: 14px; padding: 11px 14px; font-size: 14px;
-  display: flex; gap: 14px; align-items: center; max-width: calc(100vw - 32px); box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+  display: flex; gap: 14px; align-items: center; width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
 }
 #toast.in { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 #toast button { color: #64d2ff; font-weight: 600; font-size: 14px; white-space: nowrap; flex-shrink: 0; }

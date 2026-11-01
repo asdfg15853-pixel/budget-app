@@ -6,7 +6,7 @@
 
 const API = 'https://script.google.com/macros/s/AKfycbwK4qetpriYFGnhtJaVvmnH-7PoPrEM-XS-oGAq5Ri3r93KnwrSnognlYIMh7LAwhD8/exec';
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1opK41aXB8vl_7LGYoYTdYdV5QQHiGS3nxYsvmYzDAcQ/edit';
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 const CAT_ICON = {
   '주거': '🏠', '정기결제': '🔁', '식비': '🍚', '생활·쇼핑': '🛍️', '교통': '🚇', '건강·운동': '💪', '취미·배움': '🎨',
@@ -75,8 +75,9 @@ const S = {
   busy: {}
 };
 function resetAdd(keepDate) {
-  S.add = { kind: '지출', cat: '', amt: '', name: '', pay: store.get('lastPay', '네이버 현대카드'), rc: false,
-            date: keepDate && S.add ? S.add.date : today() };
+  const keep = keepDate && S.add;
+  S.add = { kind: keep && S.add.kind === '고정' ? '고정' : '지출', cat: '', amt: '', name: '', pay: store.get('lastPay', '네이버 현대카드'), rc: false,
+            date: keep ? S.add.date : today(), day: keep ? S.add.day : parseYmd(today()).getDate() };
 }
 
 /* ───────────── API ───────────── */
@@ -253,21 +254,49 @@ function viewWelcome() {
 /* ───────────── ① 빠른 입력 ───────────── */
 
 function catsOf(kind) { return ((S.boot && S.boot.cats) || []).filter(c => c.kind === kind); }
+function fixedCats() { return catsOf('지출').filter(c => c.fixed === '고정'); }
+
+/* 한 달 예산: 고정비까지 포함한 전체 지출 기준. 남은 돈 = 예산 − 쓴 돈 − 이번 달 아직 안 나간 고정비 */
+function budgetInfo() {
+  const b = S.boot && S.boot.budget;
+  if (!b || b.month !== today().slice(0, 7)) return null;
+  const t = parseYmd(today());
+  const daysLeft = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate() - t.getDate() + 1;
+  const remain = b.amount - b.spent - b.upcoming;
+  return { amount: b.amount, spent: b.spent, upcoming: b.upcoming, remain, daysLeft,
+           perDay: remain > 0 ? Math.floor(remain / daysLeft / 100) * 100 : 0 };
+}
+function saveBootCache() { if (S.boot && S.boot.ledger && S.boot.ledger.month === today().slice(0, 7)) store.set('c_boot', S.boot); }
+function activeFixed(kind) {
+  const cur = today().slice(0, 7);
+  return ((S.boot && S.boot.fixed) || []).filter(f => f.k === kind && !f.stop && !(f.e && f.e <= cur));
+}
 
 function viewAdd() {
   if (!S.add) resetAdd();
   const A = S.add;
   if (!S.boot) return h('div', { class: 'loading' }, h('span', { class: 'spin' }), '불러오는 중');
   const n = Number(A.amt || 0);
+  const isFx = A.kind === '고정';
 
-  const dateInp = h('input', { type: 'date', value: A.date, max: '2100-12-31', 'aria-label': '날짜' });
-  dateInp.addEventListener('change', () => { A.date = dateInp.value || today(); render(); });
-  const dLabel = A.date === today() ? '오늘' : dayLabel(A.date);
+  // 왼쪽 위: 보통은 날짜, 고정비는 '매월 며칠'
+  let leftChip;
+  if (isFx) {
+    const sel = h('select', { 'aria-label': '매월 결제일' }, Array.from({ length: 31 }, (_, i) =>
+      h('option', { value: i + 1, selected: A.day === i + 1 ? true : null }, '매월 ' + (i + 1) + '일' + (i === 30 ? ' (말일)' : ''))));
+    sel.addEventListener('change', () => { A.day = Number(sel.value); render(); });
+    leftChip = h('label', { class: 'date-chip' }, '🔁 매월 ', A.day + '일', sel);
+  } else {
+    const dateInp = h('input', { type: 'date', value: A.date, max: '2100-12-31', 'aria-label': '날짜' });
+    dateInp.addEventListener('change', () => { A.date = dateInp.value || today(); render(); });
+    leftChip = h('label', { class: 'date-chip' }, '📅 ', A.date === today() ? '오늘' : dayLabel(A.date), dateInp);
+  }
 
-  const kindSeg = h('div', { class: 'seg' }, ['지출', '수입', '이체'].map(k =>
+  const kindSeg = h('div', { class: 'seg' }, ['지출', '수입', '이체', '고정'].map(k =>
     h('button', { class: A.kind === k ? 'on' : '', onclick: () => { A.kind = k; A.cat = ''; render(); } }, k)));
 
-  const cats = h('div', { class: 'chips cats' }, catsOf(A.kind).map(c =>
+  const catList = isFx ? fixedCats() : catsOf(A.kind);
+  const cats = h('div', { class: 'chips cats' }, catList.map(c =>
     h('button', { class: 'chip' + (A.cat === c.name ? ' on' : ''), onclick: () => { A.cat = A.cat === c.name ? '' : c.name; render(); } },
       (CAT_ICON[c.name] || '') + ' ' + c.name)));
 
@@ -279,8 +308,9 @@ function viewAdd() {
     ? h('button', { class: 'toggle-pill' + (A.rc ? ' on' : ''), onclick: () => { A.rc = !A.rc; render(); } }, A.rc ? '✓ 현금영수증' : '현금영수증')
     : null;
 
-  const name = h('input', { class: 'name', type: 'text', placeholder: '내용 (선택) 예: 점심, 쿠팡', value: A.name, enterkeyhint: 'done' });
-  name.addEventListener('input', () => { A.name = name.value; });
+  const name = h('input', { class: 'name', type: 'text', value: A.name, enterkeyhint: 'done',
+    placeholder: isFx ? '이름 (필수) 예: 넷플릭스, 관리비' : '내용 (선택) 예: 점심, 쿠팡' });
+  name.addEventListener('input', () => { A.name = name.value; saveBtn.disabled = !canSave(); });
   name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
 
   const key = d => () => {
@@ -290,17 +320,44 @@ function viewAdd() {
   };
   const amtV = h('span', { class: 'v' + (n ? '' : ' zero') }, n ? n.toLocaleString('ko-KR') : '0');
   const hint = h('div', { class: 'hint' }, n >= 10000 ? man(n) + '원' : '');
-  const saveBtn = h('button', { class: 'save', onclick: save }, '저장');
+  const bline = h('button', { class: 'bline' });
+  const saveBtn = h('button', { class: 'save', onclick: save }, isFx ? '고정비 등록' : '저장');
+  const canSave = () => Number(A.amt || 0) > 0 && !!A.cat && (!isFx || !!A.name.trim());
+
+  // 금액 아래 한 줄: 지출은 남은 예산, 고정비는 매달 자동 안내
+  function drawLine() {
+    const v = Number(A.amt || 0);
+    if (isFx) {
+      const cnt = activeFixed('지출').length;
+      bline.className = 'bline';
+      bline.onclick = () => openFixedList();
+      bline.replaceChildren('매달 ', h('b', null, A.day + '일'), '에 자동으로 채워져요', cnt ? ' · 등록 ' + cnt + '개 ›' : '');
+      return;
+    }
+    const info = A.kind === '지출' ? budgetInfo() : null;
+    if (!info) { bline.className = 'bline hide'; bline.replaceChildren(); return; }
+    bline.onclick = () => openBudget();
+    if (!info.amount) { bline.className = 'bline set'; bline.replaceChildren('💰 한 달 예산 정하기 ›'); return; }
+    const inMonth = A.date.slice(0, 7) === today().slice(0, 7);
+    const after = info.remain - (inMonth ? v : 0);
+    bline.className = 'bline' + (after < 0 ? ' neg' : '');
+    if (v > 0 && inMonth) bline.replaceChildren(after < 0 ? '저장하면 예산 ' : '저장하면 남은 예산 ', h('b', null, won(Math.abs(after))), after < 0 ? ' 초과' : '');
+    else if (info.remain < 0) bline.replaceChildren('이번 달 예산 ', h('b', null, won(-info.remain)), ' 초과');
+    else bline.replaceChildren('남은 예산 ', h('b', null, won(info.remain)), ' · 하루 ', h('b', null, won(info.perDay)));
+  }
   function updateAmount() {
     const v = Number(A.amt || 0);
     amtV.textContent = v ? v.toLocaleString('ko-KR') : '0';
     amtV.className = 'v' + (v ? '' : ' zero');
     hint.textContent = v >= 10000 ? man(v) + '원' : '';
-    saveBtn.disabled = !(v > 0 && A.cat);
+    saveBtn.disabled = !canSave();
+    drawLine();
   }
-  saveBtn.disabled = !(n > 0 && A.cat);
+  saveBtn.disabled = !canSave();
+  drawLine();
 
   async function save() {
+    if (isFx) return saveFixed();
     const item = { d: A.date, c: A.cat, n: A.name.trim(), a: Number(A.amt), p: A.pay, rc: A.rc && A.pay === '현금' };
     saveBtn.disabled = true;
     try {
@@ -319,8 +376,28 @@ function viewAdd() {
         toast('연결이 안 돼서 모아 뒀어요. 연결되면 자동으로 보내요');
       } else { toast(e.message); saveBtn.disabled = false; return; }
     }
+    // 예산 숫자는 다음 새로고침 전까지 화면에서 바로 반영
+    const b = S.boot && S.boot.budget;
+    if (b && A.kind === '지출' && item.d.slice(0, 7) === b.month) { b.spent += item.a; saveBootCache(); }
     resetAdd(true);
     render();
+  }
+
+  async function saveFixed() {
+    const item = { n: A.name.trim(), c: A.cat, a: Number(A.amt), p: A.pay, d: A.day };
+    saveBtn.disabled = true;
+    try {
+      const j = await api('app_fixed_add', item);
+      toast(j.message, {
+        undo: async () => {
+          try { await api('app_fixed_delete', { i: j.i, check: { n: item.n } }); toast('등록을 취소했어요'); refreshQuiet(); }
+          catch (e) { toast(e.message); }
+        }
+      });
+      Object.assign(A, { amt: '', name: '', cat: '' });
+      render();
+      refreshQuiet();
+    } catch (e) { toast(e.message); saveBtn.disabled = false; }
   }
 
   const keys = h('div', { class: 'pad-keys' },
@@ -328,11 +405,10 @@ function viewAdd() {
       h('button', { onclick: key(d), 'aria-label': d === 'del' ? '지우기' : d }, d === 'del' ? '⌫' : d)));
 
   const box = outbox();
-  return h('div', { class: 'add' },
-    h('div', { class: 'head' },
-      h('label', { class: 'date-chip' }, '📅 ', dLabel, dateInp),
-      kindSeg),
+  return h('div', { class: 'add' + (isFx ? ' fx' : '') },
+    h('div', { class: 'head' }, leftChip, kindSeg),
     h('div', { class: 'amount' }, amtV, h('span', { class: 'u' }, '원'), hint),
+    bline,
     cats,
     h('div', { class: 'opts' }, paySeg, rcBtn),
     name,
@@ -340,6 +416,37 @@ function viewAdd() {
     saveBtn,
     box.length ? h('div', { class: 'outbox' }, '보내지 못한 입력 ' + box.length + '건 · 연결되면 자동으로 보내요') : null
   );
+}
+
+/* 한 달 예산 정하기 */
+function openBudget() {
+  const info = budgetInfo() || { amount: Number(S.boot && S.boot.budget && S.boot.budget.amount) || 0 };
+  let v = info.amount ? String(info.amount) : '';
+  const inp = h('input', { type: 'text', inputmode: 'numeric', placeholder: '예: 1,500,000', value: v ? Number(v).toLocaleString('ko-KR') : '' });
+  const hint = h('div', { class: 'help' }, v ? man(Number(v)) + '원' : ' ');
+  inp.addEventListener('input', () => {
+    v = inp.value.replace(/[^\d]/g, '').replace(/^0+/, '').slice(0, 10);
+    inp.value = v ? Number(v).toLocaleString('ko-KR') : '';
+    hint.textContent = v ? man(Number(v)) + '원' : ' ';
+  });
+  const fx = activeFixed('지출').reduce((s, f) => s + f.a, 0);
+  openSheet({
+    title: '한 달 예산', right: '저장',
+    onRight: async () => {
+      const j = await api('app_budget', { amount: Number(v || 0) });
+      if (S.boot && S.boot.budget) S.boot.budget.amount = j.amount;
+      saveBootCache();
+      toast(j.message);
+      render();
+    },
+    body: h('div', null,
+      h('div', { class: 'list' }, field('한 달 예산', inp)),
+      hint,
+      h('div', { class: 'help' }, '고정비까지 포함한 한 달 전체 지출 기준이에요. 가계부와 입력 화면에 남은 예산과 하루에 쓸 수 있는 돈이 나와요.'),
+      fx ? h('div', { class: 'help' }, '참고로 매달 나가는 고정비는 ' + won(fx) + '이에요.') : null,
+      h('div', { class: 'help' }, '설정 탭의 같은 칸이라 비상금 목표(생활비 × 개월 수)에도 함께 쓰여요.'))
+  });
+  setTimeout(() => inp.focus(), 320);
 }
 
 /* ───────────── ② 가계부 ───────────── */
@@ -383,10 +490,13 @@ function viewLedger() {
   const st = ledgerStats(rows);
   const out = [head, errBox()];
 
-  // 요약
+  // 요약 (이번 달이면 예산도 같이)
+  const isCur = ym === today().slice(0, 7);
+  const binfo = isCur ? budgetInfo() : null;
   out.push(h('div', { class: 'card pad kpi' },
     h('div', { class: 'lbl' }, '이번 달 지출'),
     h('div', { class: 'big' }, won(st.exp)),
+    binfo ? budgetBlock(binfo) : null,
     h('div', { class: 'grid' },
       h('div', null, h('div', { class: 'lbl' }, '수입'), h('div', { class: 'v pos' }, won(st.inc))),
       h('div', null, h('div', { class: 'lbl' }, '투자·저축'), h('div', { class: 'v' }, won(st.inv))),
@@ -425,6 +535,9 @@ function viewLedger() {
         st.card >= min ? '✓ 실적 채웠어요' : won(min - st.card) + ' 더 쓰면 실적 달성')));
   }
 
+  // 고정비
+  if (isCur && S.boot && S.boot.fixed) out.push(fixedSection());
+
   // 카테고리
   const cats = Object.keys(st.byCat).sort((a, b) => st.byCat[b] - st.byCat[a]);
   if (cats.length) {
@@ -457,6 +570,130 @@ function viewLedger() {
     out.push(h('div', { class: 'list' }, g.rows.map(r => txRow(r))));
   });
   return h('div', null, out);
+}
+
+function budgetBlock(info) {
+  if (!info.amount) {
+    return h('button', { class: 'budget set', onclick: openBudget },
+      h('span', { class: 'bt' }, '💰 한 달 예산 정하기'), h('span', { class: 'caption' }, '정하면 하루에 쓸 수 있는 돈을 알려 드려요 ›'));
+  }
+  const used = Math.min(1, info.spent / info.amount);
+  const up = Math.min(1 - used, info.upcoming / info.amount);
+  const over = info.remain < 0;
+  const tone = over ? ' over' : (info.spent + info.upcoming) / info.amount >= 0.9 ? ' warn' : '';
+  return h('button', { class: 'budget', onclick: openBudget },
+    h('div', { class: 'bl' }, h('span', { class: 'lbl' }, over ? '예산 초과' : '남은 예산'), h('span', { class: 'lbl' }, '예산 ' + won(info.amount) + ' ›')),
+    h('div', { class: 'bl' },
+      h('span', { class: 'bv' + (over ? ' neg' : '') }, won(Math.abs(info.remain))),
+      over ? null : h('span', { class: 'pd' }, '하루 ' + won(info.perDay))),
+    h('div', { class: 'progress b' }, h('div', { class: 'u' + tone, style: { width: used * 100 + '%' } }), h('div', { class: 'f', style: { width: up * 100 + '%' } })),
+    h('div', { class: 'caption' }, '쓴 돈 ' + won(info.spent) + (info.upcoming ? ' · 나갈 고정비 ' + won(info.upcoming) : '') + ' · ' + info.daysLeft + '일 남음'));
+}
+
+/* 고정비: 한 번 넣으면 매달 결제일에 가계부에 자동으로 채워져요 */
+function fixedState(f) {
+  const s = f.st || '';
+  let m;
+  if (f.stop || /중지/.test(s)) return '매월 ' + f.d + '일 · 잠시 중지';
+  if ((m = s.match(/예정\s*(\d+\/\d+)/))) return m[1] + ' 예정';
+  if ((m = s.match(/(\d+\/\d+)\s*반영/))) return m[1] + (f.k === '수입' ? ' 들어옴' : ' 나감');
+  if (/가계부 값/.test(s)) return '이번 달은 직접 적음';
+  return s;
+}
+function fixedRow(f) {
+  const inc = f.k === '수입';
+  const ended = !!f.e;
+  return h('button', { class: 'row ind' + (ended || f.stop ? ' ro' : ''), onclick: () => editFixed(f) },
+    h('div', { class: 'ico' }, CAT_ICON[f.c] || '🔁'),
+    h('div', { class: 'main' },
+      h('div', { class: 't1' }, f.n, ended ? h('span', { class: 'badge' }, '해지 · 이번 달까지') : null),
+      h('div', { class: 't2' }, [PAY_SHORT[f.p] || f.p, fixedState(f) || '매월 ' + f.d + '일'].filter(Boolean).join(' · '))),
+    h('div', { class: 'end amt' + (inc ? ' inc' : '') }, (inc ? '+' : '') + won(f.a)));
+}
+function fixedSection() {
+  const all = S.boot.fixed || [];
+  const exp = all.filter(f => f.k === '지출'), inc = all.filter(f => f.k === '수입');
+  const tot = activeFixed('지출').reduce((s, f) => s + f.a, 0);
+  return h('div', { id: 'fixed-sec' },
+    h('div', { class: 'section-title row-title' }, h('span', null, '고정비 · 매달 자동'), tot ? h('span', { class: 'num' }, '월 ' + won(tot)) : null),
+    exp.length ? h('div', { class: 'list' }, exp.map(fixedRow))
+      : h('div', { class: 'card pad empty' }, '넷플릭스·관리비처럼 매달 나가는 돈을 한 번만 넣어 두면, 매달 결제일에 가계부에 자동으로 채워져요.'),
+    inc.length ? h('div', { class: 'list', style: { marginTop: '8px' } }, inc.map(fixedRow)) : null,
+    h('button', { class: 'add-btn', onclick: () => goAddFixed() }, '＋ 고정비 추가'));
+}
+function goAddFixed() {
+  resetAdd();
+  S.add.kind = '고정';
+  setTab('add');
+}
+function openFixedList() {
+  setTab('ledger');
+  setTimeout(() => { const el = document.getElementById('fixed-sec'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+}
+
+function editFixed(f) {
+  const inc = f.k === '수입';
+  const E = { n: f.n, c: f.c, a: String(f.a), p: f.p, d: f.d };
+  const list = inc ? catsOf('수입') : fixedCats();
+  if (!list.some(c => c.name === f.c)) list.push({ name: f.c });
+  const catBox = h('div', { class: 'chips' });
+  const drawCats = () => catBox.replaceChildren(...list.map(c =>
+    h('button', { class: 'chip sm' + (E.c === c.name ? ' on' : ''), onclick: () => { E.c = c.name; drawCats(); } }, (CAT_ICON[c.name] || '') + ' ' + c.name)));
+  drawCats();
+  const name = h('input', { type: 'text', value: E.n, placeholder: '이름' }); name.addEventListener('input', () => E.n = name.value);
+  const amt = h('input', { type: 'text', inputmode: 'numeric', value: Number(E.a).toLocaleString('ko-KR') });
+  amt.addEventListener('input', () => { const v = amt.value.replace(/[^\d]/g, ''); E.a = v; amt.value = v ? Number(v).toLocaleString('ko-KR') : ''; });
+  const day = h('select', null, Array.from({ length: 31 }, (_, i) => h('option', { value: i + 1, selected: E.d === i + 1 ? true : null }, (i + 1) + '일')));
+  day.addEventListener('change', () => E.d = Number(day.value));
+  const pay = h('select', null, (S.boot.pays || []).map(p => h('option', { value: p.name, selected: p.name === E.p ? true : null }, PAY_SHORT[p.name] || p.name)));
+  pay.addEventListener('change', () => E.p = pay.value);
+  const check = { n: f.n };
+
+  const { close } = openSheet({
+    title: inc ? '매달 들어오는 돈' : '고정비', right: '저장',
+    onRight: async () => {
+      const ch = {};
+      if (E.n.trim() !== f.n) ch.n = E.n.trim();
+      if (E.c !== f.c) ch.c = E.c;
+      if (Number(E.a) !== f.a) ch.a = Number(E.a);
+      if (E.d !== f.d) ch.d = E.d;
+      if (E.p !== f.p) ch.p = E.p;
+      if (!Object.keys(ch).length) return;
+      const j = await api('app_fixed_save', { i: f.i, check, f: ch });
+      toast(j.message);
+      refreshQuiet();
+    },
+    body: h('div', null,
+      h('div', { class: 'card pad' }, catBox),
+      h('div', { class: 'list', style: { marginTop: '12px' } },
+        field('이름', name), field('금액', amt), field('매월 결제일', day), field('결제수단', pay)),
+      h('div', { class: 'help' }, f.s ? f.s.slice(0, 4) + '년 ' + Number(f.s.slice(5, 7)) + '월부터 매달 자동으로 채우는 중이에요. ' : '',
+        '금액이나 결제일을 바꾸면 이번 달부터 새 값이 들어가고, 지난달까지 기록은 그대로 남아요.'),
+      f.e
+        ? h('button', { class: 'add-btn', onclick: async () => {
+            try { const j = await api('app_fixed_end', { i: f.i, check, undo: true }); close(); toast(j.message); refreshQuiet(); }
+            catch (e) { toast(e.message); }
+          } }, '해지 취소하기')
+        : h('button', { class: 'danger', onclick: async () => {
+            if (!confirm(f.n + ' 해지할까요?\n지난 기록은 남고, 다음 결제부터 자동으로 안 채워져요.')) return;
+            try {
+              const j = await api('app_fixed_end', { i: f.i, check });
+              close();
+              toast(j.message, { undo: async () => {
+                try {
+                  if (j.deleted) await api('app_fixed_add', j.item); else await api('app_fixed_end', { i: f.i, check, undo: true });
+                  toast('해지를 취소했어요'); refreshQuiet();
+                } catch (e) { toast(e.message); }
+              } });
+              refreshQuiet();
+            } catch (e) { toast(e.message); }
+          } }, inc ? '그만 받기' : '해지하기'),
+      h('button', { class: 'linkbtn', onclick: async () => {
+        if (!confirm(f.n + '을(를) 완전히 지울까요?\n잘못 넣었을 때 쓰는 기능이에요. 지난달까지 자동으로 채워진 기록도 같이 사라져요.')) return;
+        try { const j = await api('app_fixed_delete', { i: f.i, check }); close(); toast(j.message); refreshQuiet(); }
+        catch (e) { toast(e.message); }
+      } }, '잘못 넣었어요 · 기록까지 지우기'))
+  });
 }
 
 function txRow(r) {
@@ -516,15 +753,18 @@ async function classify(p, cat) {
 
 function editTx(r) {
   if (r.fx) {
+    const fxItem = ((S.boot && S.boot.fixed) || []).find(f => f.n === r.n && f.c === r.c);
     openSheet({
-      title: '고정지출 자동', left: '닫기',
+      title: '고정비 자동', left: '닫기',
       body: h('div', null,
         h('div', { class: 'list' },
           field('내용', h('div', { class: 'ro' }, r.n)),
           field('금액', h('div', { class: 'ro' }, won(r.a))),
           field('날짜', h('div', { class: 'ro' }, dayLabel(r.d))),
           field('카테고리', h('div', { class: 'ro' }, r.c))),
-        h('div', { class: 'help' }, '고정지출 탭에서 매달 자동으로 잡힌 줄이에요. 이번 달 실제 금액이 다르면 같은 이름으로 새로 입력하면 그 값으로 바뀌어요.'),
+        h('div', { class: 'help' }, '고정비로 매달 자동으로 채워진 줄이에요. 이번 달만 금액이 다르면 같은 이름으로 실제 금액을 입력하면 그 값으로 바뀌어요.'),
+        fxItem ? h('button', { class: 'add-btn', onclick: () => { document.querySelector('.scrim').click(); setTimeout(() => editFixed(fxItem), 300); } },
+          '고정비 설정 열기 (금액 변경·해지)') : null,
         h('button', { class: 'add-btn', onclick: () => {
           document.querySelector('.scrim').click();
           resetAdd(); Object.assign(S.add, { kind: '지출', cat: r.c, name: r.n, date: r.d, pay: r.p || S.add.pay });

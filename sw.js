@@ -1,5 +1,5 @@
 // 앱 화면 파일만 저장해 두고, 연결되면 항상 새 파일을 받아요 (수정이 바로 반영되게)
-const CACHE = 'ba-shell-v1';
+const CACHE = 'ba-shell-v2';
 const SHELL = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
