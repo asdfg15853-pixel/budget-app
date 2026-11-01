@@ -6,7 +6,7 @@
 
 const API = 'https://script.google.com/macros/s/AKfycbwK4qetpriYFGnhtJaVvmnH-7PoPrEM-XS-oGAq5Ri3r93KnwrSnognlYIMh7LAwhD8/exec';
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1opK41aXB8vl_7LGYoYTdYdV5QQHiGS3nxYsvmYzDAcQ/edit';
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 
 const CAT_ICON = {
   '주거': '🏠', '정기결제': '🔁', '식비': '🍚', '생활·쇼핑': '🛍️', '교통': '🚇', '건강·운동': '💪', '취미·배움': '🎨',
@@ -256,14 +256,21 @@ function viewWelcome() {
 function catsOf(kind) { return ((S.boot && S.boot.cats) || []).filter(c => c.kind === kind); }
 function fixedCats() { return catsOf('지출').filter(c => c.fixed === '고정'); }
 
-/* 한 달 예산: 고정비까지 포함한 전체 지출 기준. 남은 돈 = 예산 − 쓴 돈 − 이번 달 아직 안 나간 고정비 */
+/* 한 달 예산 = 순수 생활비 예산 (주거·정기결제 같은 고정비는 빼고 따로 봐요)
+ * 남은 생활비 = 예산 − 이번 달 생활비로 쓴 돈 */
+function isFixedCat(c) { return fixedCats().some(x => x.name === c); }
+function isFixedRow(r) { return r.fx || r.fv === '고정' || isFixedCat(r.c); }
+function livingSpent(rows) { return rows.reduce((s, r) => s + (r.g === '지출' && !isFixedRow(r) ? r.a : 0), 0); }
 function budgetInfo() {
   const b = S.boot && S.boot.budget;
-  if (!b || b.month !== today().slice(0, 7)) return null;
+  const cur = today().slice(0, 7);
+  if (!b || b.month !== cur) return null;
+  const L = S.boot.ledger;
+  const spent = L && L.month === cur ? livingSpent(L.rows || []) : (b.living !== undefined ? b.living : b.spent);
   const t = parseYmd(today());
   const daysLeft = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate() - t.getDate() + 1;
-  const remain = b.amount - b.spent - b.upcoming;
-  return { amount: b.amount, spent: b.spent, upcoming: b.upcoming, remain, daysLeft,
+  const remain = b.amount - spent;
+  return { amount: b.amount, spent, remain, daysLeft, fixedMonthly: activeFixed('지출').reduce((s, f) => s + f.a, 0),
            perDay: remain > 0 ? Math.floor(remain / daysLeft / 100) * 100 : 0 };
 }
 function saveBootCache() { if (S.boot && S.boot.ledger && S.boot.ledger.month === today().slice(0, 7)) store.set('c_boot', S.boot); }
@@ -341,12 +348,13 @@ function viewAdd() {
     if (!info) { bline.className = 'bline hide'; bline.replaceChildren(); return; }
     bline.onclick = () => openBudget();
     if (!info.amount) { bline.className = 'bline set'; bline.replaceChildren('💰 한 달 예산 정하기 ›'); return; }
+    if (A.cat && isFixedCat(A.cat)) { bline.className = 'bline'; bline.replaceChildren(A.cat + '는 고정비라 생활비 예산에서 빠져요'); return; }
     const inMonth = A.date.slice(0, 7) === today().slice(0, 7);
     const after = info.remain - (inMonth ? v : 0);
     bline.className = 'bline' + (after < 0 ? ' neg' : '');
-    if (v > 0 && inMonth) bline.replaceChildren(after < 0 ? '저장하면 예산 ' : '저장하면 남은 예산 ', h('b', null, won(Math.abs(after))), after < 0 ? ' 초과' : '');
-    else if (info.remain < 0) bline.replaceChildren('이번 달 예산 ', h('b', null, won(-info.remain)), ' 초과');
-    else bline.replaceChildren('남은 예산 ', h('b', null, won(info.remain)), ' · 하루 ', h('b', null, won(info.perDay)));
+    if (v > 0 && inMonth) bline.replaceChildren(after < 0 ? '저장하면 생활비 예산 ' : '저장하면 남은 생활비 ', h('b', null, won(Math.abs(after))), after < 0 ? ' 초과' : '');
+    else if (info.remain < 0) bline.replaceChildren('이번 달 생활비 예산 ', h('b', null, won(-info.remain)), ' 초과');
+    else bline.replaceChildren('남은 생활비 ', h('b', null, won(info.remain)), ' · 하루 ', h('b', null, won(info.perDay)));
   }
   function updateAmount() {
     const v = Number(A.amt || 0);
@@ -363,9 +371,11 @@ function viewAdd() {
     if (isFx) return saveFixed();
     const item = { d: A.date, c: A.cat, n: A.name.trim(), a: Number(A.amt), p: A.pay, rc: A.rc && A.pay === '현금' };
     saveBtn.disabled = true;
+    let savedRow = 0;
     try {
       const j = await api('app_add', item);
       const r = j.row;
+      savedRow = r;
       toast((A.cat) + ' ' + won(item.a) + ' 저장했어요', {
         undo: async () => {
           try { await api('app_delete', { r, check: { d: item.d, a: item.a } }); toast('지웠어요'); refreshQuiet(); }
@@ -379,9 +389,14 @@ function viewAdd() {
         toast('연결이 안 돼서 모아 뒀어요. 연결되면 자동으로 보내요');
       } else { toast(e.message); saveBtn.disabled = false; return; }
     }
-    // 예산 숫자는 다음 새로고침 전까지 화면에서 바로 반영
-    const b = S.boot && S.boot.budget;
-    if (b && A.kind === '지출' && item.d.slice(0, 7) === b.month) { b.spent += item.a; saveBootCache(); }
+    // 다음 새로고침 전까지 가계부·예산에 바로 보이게
+    const L = S.boot && S.boot.ledger;
+    if (L && L.month === item.d.slice(0, 7)) {
+      L.rows.push({ r: savedRow || 0, d: item.d, c: item.c, n: item.n, a: item.a, p: item.p, rc: item.rc, m: '앱 입력',
+                    g: A.kind, fv: isFixedCat(item.c) ? '고정' : '변동', pt: '', due: '', fx: false, ff: false });
+      L.rows.sort((p, q) => (p.d < q.d ? 1 : p.d > q.d ? -1 : (q.r - p.r)));
+      saveBootCache();
+    }
     resetAdd(true);
     render();
   }
@@ -434,7 +449,7 @@ function openBudget() {
   });
   const fx = activeFixed('지출').reduce((s, f) => s + f.a, 0);
   openSheet({
-    title: '한 달 예산', right: '저장',
+    title: '한 달 생활비 예산', right: '저장',
     onRight: async () => {
       const j = await api('app_budget', { amount: Number(v || 0) });
       if (S.boot && S.boot.budget) S.boot.budget.amount = j.amount;
@@ -443,11 +458,11 @@ function openBudget() {
       render();
     },
     body: h('div', null,
-      h('div', { class: 'list' }, field('한 달 예산', inp)),
+      h('div', { class: 'list' }, field('생활비 예산', inp)),
       hint,
-      h('div', { class: 'help' }, '고정비까지 포함한 한 달 전체 지출 기준이에요. 가계부와 입력 화면에 남은 예산과 하루에 쓸 수 있는 돈이 나와요.'),
+      h('div', { class: 'help' }, '식비·쇼핑·교통 같은 생활비만 잡는 예산이에요. 주거·정기결제 같은 고정비는 빼고 따로 봐요. 가계부와 입력 화면에 남은 생활비와 하루에 쓸 수 있는 돈이 나와요.'),
       fx ? h('div', { class: 'help' }, '참고로 매달 나가는 고정비는 ' + won(fx) + '이에요.') : null,
-      h('div', { class: 'help' }, '설정 탭의 같은 칸이라 비상금 목표(생활비 × 개월 수)에도 함께 쓰여요.'))
+      h('div', { class: 'help' }, '비상금 목표는 (생활비 + 고정비) × 개월 수로 계산돼요.'))
   });
   setTimeout(() => inp.focus(), 320);
 }
@@ -578,19 +593,18 @@ function viewLedger() {
 function budgetBlock(info) {
   if (!info.amount) {
     return h('button', { class: 'budget set', onclick: openBudget },
-      h('span', { class: 'bt' }, '💰 한 달 예산 정하기'), h('span', { class: 'caption' }, '정하면 하루에 쓸 수 있는 돈을 알려 드려요 ›'));
+      h('span', { class: 'bt' }, '💰 한 달 생활비 예산 정하기'), h('span', { class: 'caption' }, '고정비 빼고, 하루에 쓸 수 있는 돈을 알려 드려요 ›'));
   }
   const used = Math.min(1, info.spent / info.amount);
-  const up = Math.min(1 - used, info.upcoming / info.amount);
   const over = info.remain < 0;
-  const tone = over ? ' over' : (info.spent + info.upcoming) / info.amount >= 0.9 ? ' warn' : '';
+  const tone = over ? ' over' : info.spent / info.amount >= 0.9 ? ' warn' : '';
   return h('button', { class: 'budget', onclick: openBudget },
-    h('div', { class: 'bl' }, h('span', { class: 'lbl' }, over ? '예산 초과' : '남은 예산'), h('span', { class: 'lbl' }, '예산 ' + won(info.amount) + ' ›')),
+    h('div', { class: 'bl' }, h('span', { class: 'lbl' }, over ? '생활비 예산 초과' : '남은 생활비'), h('span', { class: 'lbl' }, '예산 ' + won(info.amount) + ' ›')),
     h('div', { class: 'bl' },
       h('span', { class: 'bv' + (over ? ' neg' : '') }, won(Math.abs(info.remain))),
       over ? null : h('span', { class: 'pd' }, '하루 ' + won(info.perDay))),
-    h('div', { class: 'progress b' }, h('div', { class: 'u' + tone, style: { width: used * 100 + '%' } }), h('div', { class: 'f', style: { width: up * 100 + '%' } })),
-    h('div', { class: 'caption' }, '쓴 돈 ' + won(info.spent) + (info.upcoming ? ' · 나갈 고정비 ' + won(info.upcoming) : '') + ' · ' + info.daysLeft + '일 남음'));
+    h('div', { class: 'progress b' }, h('div', { class: 'u' + tone, style: { width: used * 100 + '%' } })),
+    h('div', { class: 'caption' }, '생활비 ' + won(info.spent) + ' 씀 · ' + info.daysLeft + '일 남음' + (info.fixedMonthly ? ' · 고정비 월 ' + won(info.fixedMonthly) + '은 따로' : '')));
 }
 
 /* 고정비: 한 번 넣으면 매달 결제일에 가계부에 자동으로 채워져요 */

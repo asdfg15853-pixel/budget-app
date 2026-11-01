@@ -1049,14 +1049,16 @@ function appFixed_(b) {
 
 
 /* ── 한 달 예산 ──
- * 예산은 설정 탭의 LIVING_COST(한 달 예산·생활비) 한 칸이에요. 비상금 목표 계산에도 같이 써요.
- * 고정비까지 포함한 한 달 전체 지출 기준: 남은 돈 = 예산 − 이번 달 쓴 돈 − 이번 달 아직 안 나간 고정비 */
+ * 예산은 설정 탭의 LIVING_COST(한 달 생활비) 한 칸이에요. 고정비(주거·정기결제, 고정지출 자동 줄)는 빼고 생활비만 봐요.
+ * 남은 생활비 = 예산 − 이번 달 생활비로 쓴 돈. 비상금 목표는 대시보드에서 (생활비 + 고정비) × 개월 수 */
 
 function appBudget_(ss, ym, rows, fixed) {
-  let spent = 0, upcoming = 0;
-  rows.forEach(r => { if (r.g === '지출') spent += r.a; });
-  fixed.forEach(f => { if (f.k === '지출' && !f.stop && /^예정/.test(f.st)) upcoming += f.a; });
-  return { month: ym, amount: Number(appNamed_(ss, 'LIVING_COST')) || 0, spent: spent, upcoming: upcoming };
+  let living = 0, fixedSpent = 0;
+  rows.forEach(r => {
+    if (r.g !== '지출') return;
+    if (r.fx || r.fv === '고정') fixedSpent += r.a; else living += r.a;
+  });
+  return { month: ym, amount: Number(appNamed_(ss, 'LIVING_COST')) || 0, living: living, fixedSpent: fixedSpent };
 }
 
 function appBudgetSet_(b) {
