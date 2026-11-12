@@ -474,7 +474,7 @@ function matchRule_(ss, merchant) {
 function aiClassify_(ss, p) {
   if (!apiKey_()) return null;
   const set = ss.getSheetByName(SET_SHEET);
-  const catRows = set.getRange('L2:O10').getValues().filter(r => r[0]);
+  const catRows = set.getRange('L2:O40').getValues().filter(r => r[0] && r[1] === '지출');
   const names = catRows.map(r => r[0]);
   const cats = catRows.map(r => '- ' + r[0] + ' (' + r[2] + '): ' + r[3]).join('\n');
   const prompt = [
@@ -808,7 +808,7 @@ function classifyRow_(row, category) {
 }
 
 function categoryNames_(ss) {
-  return ss.getSheetByName(SET_SHEET).getRange('L2:L10').getValues().map(r => r[0]).filter(Boolean);
+  return ss.getSheetByName(SET_SHEET).getRange('L2:M40').getValues().filter(r => r[0] && r[1] === '지출').map(r => r[0]);
 }
 
 function won_(n) {
@@ -888,8 +888,9 @@ function appSerial_(s) {
   return serial_({ y: +m[1], m: +m[2], d: +m[3] });
 }
 
+// 설정 탭 L:O 카테고리 표 (2행부터, 빈 줄 전까지 넉넉히 40행까지 읽어요)
 function appCats_(ss) {
-  return ss.getSheetByName(SET_SHEET).getRange('L2:O18').getValues()
+  return ss.getSheetByName(SET_SHEET).getRange('L2:O40').getValues()
     .filter(r => r[0]).map(r => ({ name: String(r[0]), kind: String(r[1]), fixed: String(r[2]), desc: String(r[3] || '') }));
 }
 

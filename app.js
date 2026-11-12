@@ -6,11 +6,11 @@
 
 const API = 'https://script.google.com/macros/s/AKfycbwK4qetpriYFGnhtJaVvmnH-7PoPrEM-XS-oGAq5Ri3r93KnwrSnognlYIMh7LAwhD8/exec';
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1opK41aXB8vl_7LGYoYTdYdV5QQHiGS3nxYsvmYzDAcQ/edit';
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 const CAT_ICON = {
   '주거': '🏠', '정기결제': '🔁', '식비': '🍚', '생활·쇼핑': '🛍️', '교통': '🚇', '건강·운동': '💪', '취미·배움': '🎨',
-  '여행': '✈️', '경조사·선물': '🎁', '급여': '💼', '상여': '🎉', '금융수입': '🏦', '기타수입': '➕',
+  '여행': '✈️', '경조사·선물': '🎁', '이자비용': '💸', '기타': '📦', '급여': '💼', '상여': '🎉', '금융수입': '🏦', '기타수입': '➕',
   '투자·저축': '📈', '카드대금': '💳', '계좌이동': '🔄', '대출상환': '📉'
 };
 const PAY_SHORT = { '네이버 현대카드': '현대카드', '신한 체크': '신한체크', '현금': '현금·계좌' };
