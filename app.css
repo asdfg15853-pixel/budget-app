@@ -155,6 +155,10 @@ button.row:active { background: var(--fill); }
 }
 .toggle-pill { padding: 7px 10px; border-radius: 9px; background: var(--fill); font-size: 13px; font-weight: 500; white-space: nowrap; }
 .toggle-pill.on { background: var(--green-soft); color: var(--green); }
+.add .namerow { display: flex; gap: 8px; align-items: stretch; margin-bottom: 10px; }
+.add .namerow .name { flex: 1; min-width: 0; margin-bottom: 0; }
+.toggle-pill.monthly { padding: 0 12px; font-size: 14px; }
+.toggle-pill.monthly.on { background: var(--blue); color: #fff; }
 .pad-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
 .pad-keys button { height: 52px; border-radius: 12px; background: var(--card); font-size: 24px; font-weight: 500; box-shadow: var(--shadow); }
 .pad-keys button:active { background: var(--fill2); }

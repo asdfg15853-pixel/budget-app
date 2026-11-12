@@ -6,7 +6,7 @@
 
 const API = 'https://script.google.com/macros/s/AKfycbwK4qetpriYFGnhtJaVvmnH-7PoPrEM-XS-oGAq5Ri3r93KnwrSnognlYIMh7LAwhD8/exec';
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1opK41aXB8vl_7LGYoYTdYdV5QQHiGS3nxYsvmYzDAcQ/edit';
-const VERSION = '1.1.2';
+const VERSION = '1.2.0';
 
 const CAT_ICON = {
   '주거': '🏠', '정기결제': '🔁', '식비': '🍚', '생활·쇼핑': '🛍️', '교통': '🚇', '건강·운동': '💪', '취미·배움': '🎨',
@@ -76,8 +76,8 @@ const S = {
 };
 function resetAdd(keepDate) {
   const keep = keepDate && S.add;
-  S.add = { kind: keep && S.add.kind === '고정' ? '고정' : '지출', cat: '', amt: '', name: '', pay: store.get('lastPay', '네이버 현대카드'), rc: false,
-            date: keep ? S.add.date : today(), day: keep ? S.add.day : parseYmd(today()).getDate() };
+  S.add = { kind: '지출', cat: '', amt: '', name: '', pay: store.get('lastPay', '네이버 현대카드'), rc: false, monthly: false,
+            date: keep ? S.add.date : today() };
 }
 
 /* ───────────── API ───────────── */
@@ -284,28 +284,17 @@ function viewAdd() {
   const A = S.add;
   if (!S.boot) return h('div', { class: 'loading' }, h('span', { class: 'spin' }), '불러오는 중');
   const n = Number(A.amt || 0);
-  if (A.kind === '고정' && !S.boot.fixed) A.kind = '지출';
-  const isFx = A.kind === '고정';
+  if (A.kind !== '지출') A.monthly = false;
+  const isFx = A.kind === '지출' && !!A.monthly;     // '매달' 토글: 저장하면 고정비로 등록 (정기결제로)
 
-  // 왼쪽 위: 보통은 날짜, 고정비는 '매월 며칠'
-  let leftChip;
-  if (isFx) {
-    const sel = h('select', { 'aria-label': '매월 결제일' }, Array.from({ length: 31 }, (_, i) =>
-      h('option', { value: i + 1, selected: A.day === i + 1 ? true : null }, '매월 ' + (i + 1) + '일' + (i === 30 ? ' (말일)' : ''))));
-    sel.addEventListener('change', () => { A.day = Number(sel.value); render(); });
-    leftChip = h('label', { class: 'date-chip' }, '🔁 매월 ', A.day + '일', sel);
-  } else {
-    const dateInp = h('input', { type: 'date', value: A.date, max: '2100-12-31', 'aria-label': '날짜' });
-    dateInp.addEventListener('change', () => { A.date = dateInp.value || today(); render(); });
-    leftChip = h('label', { class: 'date-chip' }, '📅 ', A.date === today() ? '오늘' : dayLabel(A.date), dateInp);
-  }
+  const dateInp = h('input', { type: 'date', value: A.date, max: '2100-12-31', 'aria-label': '날짜' });
+  dateInp.addEventListener('change', () => { A.date = dateInp.value || today(); render(); });
+  const leftChip = h('label', { class: 'date-chip' }, '📅 ', A.date === today() ? '오늘' : dayLabel(A.date), dateInp);
 
-  // 고정 탭은 시트 스크립트가 고정비 기능을 지원할 때만 (boot에 fixed가 있을 때)
-  const kinds = S.boot.fixed ? ['지출', '수입', '이체', '고정'] : ['지출', '수입', '이체'];
-  const kindSeg = h('div', { class: 'seg' }, kinds.map(k =>
+  const kindSeg = h('div', { class: 'seg' }, ['지출', '수입', '이체'].map(k =>
     h('button', { class: A.kind === k ? 'on' : '', onclick: () => { A.kind = k; A.cat = ''; render(); } }, k)));
 
-  const catList = isFx ? fixedCats() : catsOf(A.kind);
+  const catList = catsOf(A.kind);
   const cats = h('div', { class: 'chips cats' }, catList.map(c =>
     h('button', { class: 'chip' + (A.cat === c.name ? ' on' : ''), onclick: () => { A.cat = A.cat === c.name ? '' : c.name; render(); } },
       (CAT_ICON[c.name] || '') + ' ' + c.name)));
@@ -319,9 +308,15 @@ function viewAdd() {
     : null;
 
   const name = h('input', { class: 'name', type: 'text', value: A.name, enterkeyhint: 'done',
-    placeholder: isFx ? '이름 (필수) 예: 넷플릭스, 관리비' : '내용 (선택) 예: 점심, 쿠팡' });
+    placeholder: isFx ? '이름 (필수) 예: 넷플릭스' : '내용 (선택) 예: 점심, 쿠팡' });
   name.addEventListener('input', () => { A.name = name.value; saveBtn.disabled = !canSave(); });
   name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+  // 매달 나가는 돈 토글: 켜면 카테고리가 정기결제로 (주거·이자비용 같은 고정 카테고리는 그대로)
+  const monthlyBtn = A.kind === '지출'
+    ? h('button', { class: 'toggle-pill monthly' + (isFx ? ' on' : ''), 'aria-pressed': isFx ? 'true' : 'false',
+        onclick: () => { A.monthly = !A.monthly; if (A.monthly && !isFixedCat(A.cat)) A.cat = '정기결제'; render(); } },
+        isFx ? '🔁 매달 ✓' : '🔁 매달')
+    : null;
 
   const key = d => () => {
     if (d === 'del') A.amt = A.amt.slice(0, -1);
@@ -331,17 +326,17 @@ function viewAdd() {
   const amtV = h('span', { class: 'v' + (n ? '' : ' zero') }, n ? n.toLocaleString('ko-KR') : '0');
   const hint = h('div', { class: 'hint' }, n >= 10000 ? man(n) + '원' : '');
   const bline = h('button', { class: 'bline' });
-  const saveBtn = h('button', { class: 'save', onclick: save }, isFx ? '고정비 등록' : '저장');
-  const canSave = () => Number(A.amt || 0) > 0 && !!A.cat && (!isFx || !!A.name.trim());
+  const saveBtn = h('button', { class: 'save', onclick: save }, isFx ? '저장 · 매달 자동' : '저장');
+  const canSave = () => Number(A.amt || 0) > 0 && !!A.cat && (!isFx || !!A.name.trim());   // 매달 등록은 이름이 있어야 해요
 
   // 금액 아래 한 줄: 지출은 남은 예산, 고정비는 매달 자동 안내
   function drawLine() {
     const v = Number(A.amt || 0);
     if (isFx) {
-      const cnt = activeFixed('지출').length;
       bline.className = 'bline';
-      bline.onclick = () => openFixedList();
-      bline.replaceChildren('매달 ', h('b', null, A.day + '일'), '에 자동으로 채워져요', cnt ? ' · 등록 ' + cnt + '개 ›' : '');
+      bline.onclick = null;
+      bline.replaceChildren(h('b', null, (A.cat && isFixedCat(A.cat) ? A.cat : '정기결제')), '로 저장 · 다음 달부터 매달 ',
+        h('b', null, parseYmd(A.date).getDate() + '일'), '에 자동으로');
       return;
     }
     const info = A.kind === '지출' ? budgetInfo() : null;
@@ -368,21 +363,30 @@ function viewAdd() {
   drawLine();
 
   async function save() {
-    if (isFx) return saveFixed();
-    const item = { d: A.date, c: A.cat, n: A.name.trim(), a: Number(A.amt), p: A.pay, rc: A.rc && A.pay === '현금' };
+    const monthly = isFx;
+    const item = { d: A.date, c: monthly && !isFixedCat(A.cat) ? '정기결제' : A.cat, n: A.name.trim(), a: Number(A.amt), p: A.pay,
+                   rc: A.rc && A.pay === '현금' };
     saveBtn.disabled = true;
     let savedRow = 0;
     try {
       const j = await api('app_add', item);
       const r = j.row;
       savedRow = r;
-      toast((A.cat) + ' ' + won(item.a) + ' 저장했어요', {
+      let msg = item.c + ' ' + won(item.a) + ' 저장했어요';
+      if (monthly) {
+        try { const fj = await api('app_fixed', { r, check: { d: item.d, a: item.a }, on: true }); msg = fj.message || msg; }
+        catch (e) { msg = '저장은 했는데 매달 등록은 못 했어요: ' + e.message; }
+      }
+      toast(msg, {
         undo: async () => {
-          try { await api('app_delete', { r, check: { d: item.d, a: item.a } }); toast('지웠어요'); refreshQuiet(); }
-          catch (e) { toast(e.message); }
+          try {
+            if (monthly) { try { await api('app_fixed', { r, check: { d: item.d, a: item.a }, on: false }); } catch (e) { /* 이미 풀렸으면 그대로 */ } }
+            await api('app_delete', { r, check: { d: item.d, a: item.a } }); toast('지웠어요'); refreshQuiet();
+          } catch (e) { toast(e.message); }
         }
       });
       lastLoad.boot = 0;
+      if (monthly) refreshQuiet();
     } catch (e) {
       if (!navigator.onLine || /fetch|network|Load failed/i.test(e.message)) {
         const box = outbox(); box.push(item); store.set('outbox', box);
@@ -393,7 +397,7 @@ function viewAdd() {
     const L = S.boot && S.boot.ledger;
     if (L && L.month === item.d.slice(0, 7)) {
       L.rows.push({ r: savedRow || 0, d: item.d, c: item.c, n: item.n, a: item.a, p: item.p, rc: item.rc, m: '앱 입력',
-                    g: A.kind, fv: isFixedCat(item.c) ? '고정' : '변동', pt: '', due: '', fx: false, ff: false });
+                    g: A.kind, fv: isFixedCat(item.c) ? '고정' : '변동', pt: '', due: '', fx: false, ff: monthly });
       L.rows.sort((p, q) => (p.d < q.d ? 1 : p.d > q.d ? -1 : (q.r - p.r)));
       saveBootCache();
     }
@@ -401,35 +405,18 @@ function viewAdd() {
     render();
   }
 
-  async function saveFixed() {
-    const item = { n: A.name.trim(), c: A.cat, a: Number(A.amt), p: A.pay, d: A.day };
-    saveBtn.disabled = true;
-    try {
-      const j = await api('app_fixed_add', item);
-      toast(j.message, {
-        undo: async () => {
-          try { await api('app_fixed_delete', { i: j.i, check: { n: item.n } }); toast('등록을 취소했어요'); refreshQuiet(); }
-          catch (e) { toast(e.message); }
-        }
-      });
-      Object.assign(A, { amt: '', name: '', cat: '' });
-      render();
-      refreshQuiet();
-    } catch (e) { toast(e.message); saveBtn.disabled = false; }
-  }
-
   const keys = h('div', { class: 'pad-keys' },
     ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'del'].map(d =>
       h('button', { onclick: key(d), 'aria-label': d === 'del' ? '지우기' : d }, d === 'del' ? '⌫' : d)));
 
   const box = outbox();
-  return h('div', { class: 'add' + (isFx ? ' fx' : '') },
+  return h('div', { class: 'add' },
     h('div', { class: 'head' }, leftChip, kindSeg),
     h('div', { class: 'amount' }, amtV, h('span', { class: 'u' }, '원'), hint),
     bline,
     cats,
     h('div', { class: 'opts' }, paySeg, rcBtn),
-    name,
+    h('div', { class: 'namerow' }, name, monthlyBtn),
     keys,
     saveBtn,
     box.length ? h('div', { class: 'outbox' }, '보내지 못한 입력 ' + box.length + '건 · 연결되면 자동으로 보내요') : null
@@ -634,18 +621,14 @@ function fixedSection() {
   return h('div', { id: 'fixed-sec' },
     h('div', { class: 'section-title row-title' }, h('span', null, '고정비 · 매달 자동'), tot ? h('span', { class: 'num' }, '월 ' + won(tot)) : null),
     exp.length ? h('div', { class: 'list' }, exp.map(fixedRow))
-      : h('div', { class: 'card pad empty' }, '넷플릭스·관리비처럼 매달 나가는 돈을 한 번만 넣어 두면, 매달 결제일에 가계부에 자동으로 채워져요.'),
+      : h('div', { class: 'card pad empty' }, '입력할 때 \'🔁 매달\'을 켜면 여기에 등록되고, 다음 달부터 같은 날 가계부에 자동으로 채워져요.'),
     inc.length ? h('div', { class: 'list', style: { marginTop: '8px' } }, inc.map(fixedRow)) : null,
     h('button', { class: 'add-btn', onclick: () => goAddFixed() }, '＋ 고정비 추가'));
 }
 function goAddFixed() {
   resetAdd();
-  S.add.kind = '고정';
+  Object.assign(S.add, { kind: '지출', monthly: true, cat: '정기결제' });
   setTab('add');
-}
-function openFixedList() {
-  setTab('ledger');
-  setTimeout(() => { const el = document.getElementById('fixed-sec'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
 }
 
 function editFixed(f) {
@@ -812,9 +795,30 @@ function editTx(r) {
   pay.addEventListener('change', () => E.p = pay.value);
   const rc = sw(E.rc, v => E.rc = v);
   const memo = h('input', { type: 'text', value: E.m, placeholder: '메모' }); memo.addEventListener('input', () => E.m = memo.value);
+  const diff = () => {
+    const f = {};
+    if (E.d !== r.d) f.d = E.d;
+    if (E.c !== r.c) f.c = E.c;
+    if (E.n !== r.n) f.n = E.n;
+    if (Number(E.a) !== r.a) f.a = Number(E.a);
+    if (E.p !== r.p) f.p = E.p;
+    if (!!E.rc !== !!r.rc) f.rc = E.rc;
+    if (E.m !== r.m) f.m = E.m;
+    return f;
+  };
   const fixedSw = sw(r.ff, async (on, inp) => {
     inp.disabled = true;
     try {
+      if (on) {
+        if (!String(E.n || '').trim()) throw new Error('내용(이름)을 먼저 적어 주세요. 예: 넷플릭스');
+        // 켜면 정기결제로 (주거·이자비용 같은 고정 카테고리는 그대로). 고친 내용도 먼저 저장해서 이름이 어긋나지 않게
+        if (!isFixedCat(E.c)) { E.c = '정기결제'; curKind = '지출'; drawCats(); }
+        const f = diff();
+        if (Object.keys(f).length) {
+          await api('app_update', { r: r.r, check: { d: r.d, a: r.a }, f });
+          Object.assign(r, { d: E.d, c: E.c, n: E.n, a: Number(E.a), p: E.p, rc: E.rc, m: E.m });
+        }
+      }
       const j = await api('app_fixed', { r: r.r, check: { d: r.d, a: r.a }, on });
       inp.checked = j.on; r.ff = j.on; toast(j.message); refreshQuiet();
     } catch (e) { inp.checked = !on; toast(e.message); }
@@ -824,16 +828,19 @@ function editTx(r) {
   const { close } = openSheet({
     title: '내역 고치기', right: '저장',
     onRight: async () => {
-      const f = {};
-      if (E.d !== r.d) f.d = E.d;
-      if (E.c !== r.c) f.c = E.c;
-      if (E.n !== r.n) f.n = E.n;
-      if (Number(E.a) !== r.a) f.a = Number(E.a);
-      if (E.p !== r.p) f.p = E.p;
-      if (!!E.rc !== !!r.rc) f.rc = E.rc;
-      if (E.m !== r.m) f.m = E.m;
+      const f = diff();
       if (!Object.keys(f).length) return;
       await api('app_update', { r: r.r, check: { d: r.d, a: r.a }, f });
+      // 매달 등록된 줄이면 고정비 목록의 이름·카테고리도 같이 (이름이 어긋나면 자동 줄이 한 번 더 생겨요)
+      if (r.ff && (f.n !== undefined || f.c !== undefined)) {
+        const fi = ((S.boot && S.boot.fixed) || []).find(x => x.n === String(r.n).trim());
+        if (fi) {
+          const ch = {};
+          if (f.n !== undefined && f.n.trim()) ch.n = f.n.trim();
+          if (f.c !== undefined && f.c) ch.c = f.c;
+          try { await api('app_fixed_save', { i: fi.i, check: { n: fi.n }, f: ch }); } catch (e) { /* 시트 쪽에서 이미 맞췄으면 그대로 */ }
+        }
+      }
       toast('고쳤어요');
       refreshQuiet();
     },
@@ -846,7 +853,7 @@ function editTx(r) {
         field('메모', memo)),
       (r.g === '지출' || kind === '지출') ? h('div', null,
         h('div', { class: 'list', style: { marginTop: '20px' } }, field('매달 나가는 돈', fixedSw.el)),
-        h('div', { class: 'help' }, '켜면 고정지출 탭에 등록돼서 다음 달부터 자동으로 잡혀요.')) : null,
+        h('div', { class: 'help' }, '켜면 정기결제로 바뀌고(주거·이자비용은 그대로), 다음 달부터 매달 같은 날 자동으로 들어가요. 해지는 가계부 탭의 고정비 목록에서 해요.')) : null,
       h('button', { class: 'danger', onclick: async () => {
         if (!confirm('이 내역을 지울까요?')) return;
         try { const j = await api('app_delete', { r: r.r, check: { d: r.d, a: r.a } }); close(); toast(j.message); refreshQuiet(); }
