@@ -640,6 +640,9 @@ function onEdit(e) {
         if (v[0] && v[1]) confirmRow_(e.source, sh, r1 + i, String(v[1]), v[0], String(v[5] || ''));
       });
     }
+    if (c1 === 3 && c2 === 3 && r1 === r2 && e.oldValue !== undefined) {    // C열(내용) 한 칸을 고친 경우
+      if (sh.getRange(r1, FIXED_FLAG_COL).getValue() === true) syncFixedName_(e.source, e.oldValue, e.value, '');
+    }
     if (c1 <= FIXED_FLAG_COL && c2 >= FIXED_FLAG_COL) {                   // H열(고정 등록)을 고친 경우
       const vals = sh.getRange(r1, 1, r2 - r1 + 1, FIXED_FLAG_COL).getValues();   // A~H
       vals.forEach((v, i) => toggleFixed_(e.source, sh, r1 + i, v));
@@ -651,6 +654,27 @@ function onEdit(e) {
 
 
 /* ── 가계부에서 체크한 줄 → 고정지출 표 ── */
+
+// 고정지출 표에서 이름이 oldName인 '살아 있는' 줄의 이름(과 카테고리)을 바꿔요
+function syncFixedName_(ss, oldName, newName, newCat) {
+  oldName = String(oldName || '').trim(); newName = String(newName || '').trim();
+  if (!oldName || !newName) return '';
+  const fx = ss.getSheetByName(FIXED_SHEET);
+  if (!fx) return '';
+  const rows = fx.getRange(2, 1, FIXED_ROWS, 11).getValues();
+  const cur = appCurYm_(ss);
+  const alive = x => !(appYm_(ss, x[6]) && appYm_(ss, x[6]) < cur);
+  const i = rows.findIndex(x => String(x[0]).trim() === oldName && alive(x));
+  if (i < 0) return '';
+  if (newName !== oldName && rows.some((x, j) => j !== i && String(x[0]).trim() === newName && alive(x))) return '';
+  const t = i + 2;
+  if (newName !== oldName) {
+    fx.getRange(t, 1).setValue(newName);
+    if (String(rows[i][10]).trim() === oldName) fx.getRange(t, 11).setValue(newName);
+  }
+  if (newCat) fx.getRange(t, 2).setValue(newCat);
+  return newName;
+}
 
 // 체크: 그 줄의 이름·카테고리·금액·결제수단·날짜(일)로 고정지출에 한 줄 추가. 시작월은 그 줄의 달이에요.
 //       (그 달은 가계부에 실제 줄이 있으니 겹치지 않고, 다음 달부터 자동으로 잡혀요)
@@ -665,7 +689,7 @@ function toggleFixed_(ss, sh, row, v) {
   const same = rows.findIndex(x => String(x[0]).trim() === name && name !== '');
 
   if (!on) {
-    if (same >= 0 && String(rows[same][9]).indexOf(mark) === 0) {
+    if (same >= 0 && /^가계부 \d+행에서 등록/.test(String(rows[same][9]))) {
       const t = same + 2;
       fx.getRange(t, 1, 1, 8).setValues([['', '', '', '', '', '', '', false]]);
       fx.getRange(t, 10, 1, 2).setValues([['', '']]);
@@ -1023,6 +1047,10 @@ function appUpdate_(b) {
   ];
   if (!isFinite(Number(nv[3])) || Number(nv[3]) === 0) throw new Error('금액이 맞지 않아요');
   sh.getRange(Number(b.r), 1, 1, 7).setValues([nv]);
+  // 고정 등록(H열)된 줄의 이름·카테고리를 바꾸면 고정지출 표도 따라가요 (안 그러면 자동 줄이 한 번 더 생겨요)
+  if (v[FIXED_FLAG_COL - 1] === true && (String(nv[2]).trim() !== String(v[2]).trim() || nv[1] !== v[1])) {
+    syncFixedName_(ss, v[2], nv[2], nv[1] !== v[1] ? nv[1] : '');
+  }
   // 문자로 들어온 '확인 필요' 줄의 카테고리를 고르면 시트에서 고를 때처럼 규칙을 배워요
   if (f.c && f.c !== oldCat && f.m === undefined) confirmRow_(ss, sh, Number(b.r), String(nv[2]), f.c, memo);
   return { ok: true, message: '고쳤어요' };
